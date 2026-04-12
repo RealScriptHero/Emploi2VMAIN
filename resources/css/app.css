@@ -1,0 +1,215 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles for OFPPT Timetable Management System */
+@layer components {
+    /* Sidebar Styles */
+    .sidebar-logo {
+        @apply bg-blue-600 text-white w-16 h-16 rounded flex items-center justify-center font-bold text-base;
+        background-color: #2563EB;
+    }
+
+    .sidebar-avatar {
+        @apply w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold text-sm flex-shrink-0;
+        background-color: #2563EB;
+    }
+
+    .sidebar-nav-item {
+        @apply flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors mb-1 text-gray-700 hover:bg-gray-100;
+    }
+
+    .sidebar-nav-item.active {
+        @apply bg-blue-600 text-white;
+        background-color: #2563EB;
+    }
+
+    /* Sidebar Scroll */
+    .sidebar-scroll::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar-track {
+        background: #334155;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar-thumb {
+        background: #475569;
+        border-radius: 3px;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+        background: #64748b;
+    }
+
+    /* Sidebar layout fixes */
+    #sidebar {
+        position: fixed;
+        top: 60px;
+        left: 0;
+        height: calc(100vh - 60px);
+        display: flex;
+        flex-direction: column;
+        overflow-y: hidden;
+    }
+
+    .sidebar-nav {
+        flex: 1;
+        overflow-y: auto;
+    }
+
+    .sidebar-footer {
+        margin-top: auto;
+        flex-shrink: 0;
+    }
+
+    /* Timetable Block Styles */
+    .timetable-block {
+        @apply rounded p-2 mb-1.5 text-xs;
+        background-color: #E3F2FD;
+        border-left: 3px solid #60A5FA;
+    }
+
+    .timetable-block-module {
+        @apply font-semibold text-gray-900 mb-0.5;
+    }
+
+    .timetable-block-initials {
+        @apply text-gray-600 text-xs;
+    }
+
+    .timetable-block-room {
+        @apply text-gray-500 text-xs;
+    }
+
+    /* Table Styles */
+    .timetable-table {
+        @apply min-w-full border-collapse bg-white;
+    }
+
+    .timetable-table thead tr {
+        @apply bg-gray-50;
+    }
+
+    .timetable-table thead th {
+        @apply px-4 py-3 text-center text-xs font-semibold text-gray-700 uppercase border-r border-gray-200;
+    }
+
+    .timetable-table tbody td {
+        @apply px-2 py-2 border-r border-gray-200 align-top;
+        min-height: 80px;
+    }
+
+    .timetable-table tbody td.time-cell {
+        @apply px-4 py-4 text-sm font-medium text-gray-700 bg-gray-50 border-r border-gray-200 w-20;
+    }
+
+    /* Button Styles */
+    .btn-primary {
+        @apply bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md flex items-center gap-2 text-sm font-medium shadow-sm;
+        background-color: #2563EB;
+    }
+
+    .btn-primary:hover {
+        background-color: #1D4ED8;
+    }
+
+    /* Filter Select Styles */
+    .filter-select {
+        @apply border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
+    }
+
+    /* Week Navigation */
+    .week-nav-btn {
+        @apply text-gray-500 hover:text-gray-700 p-1;
+    }
+
+    /* Card Styles */
+    .card {
+        @apply bg-white rounded-lg shadow border border-gray-200;
+    }
+
+    .card-header {
+        @apply p-4 border-b border-gray-200;
+    }
+
+    .card-body {
+        @apply p-4;
+    }
+
+    .form-control {
+        @apply w-full px-4 py-3 border border-gray-300 rounded-2xl bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500;
+    }
+
+    .form-select {
+        @apply w-full px-4 py-3 border border-gray-300 rounded-2xl bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500;
+    }
+
+    .btn-primary-custom {
+        @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-800 text-white font-semibold text-sm px-5 py-3 transition duration-150 ease-in-out hover:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500;
+    }
+
+    .is-invalid {
+        @apply border-red-300 ring-1 ring-red-200;
+    }
+
+    .invalid-feedback {
+        @apply text-sm text-red-600 mt-1;
+    }
+}
+
+/* Alpine.js x-cloak */
+[x-cloak] {
+    display: none !important;
+}
+
+/* Progress Bar Colors */
+.progress-bar-blue {
+    background-color: #3B82F6;
+}
+
+.progress-bar-yellow {
+    background-color: #EAB308;
+}
+
+.progress-bar-green {
+    background-color: #22C55E;
+}
+
+/* Dark mode overrides for theme toggle */
+body.dark {
+    background-color: #0f172a !important;
+    color: #e2e8f0 !important;
+}
+
+body.dark .bg-white {
+    background-color: #111827 !important;
+}
+
+body.dark .bg-gray-50 {
+    background-color: #0f172a !important;
+}
+
+body.dark .border-gray-200 {
+    border-color: #334155 !important;
+}
+
+body.dark .text-gray-900,
+body.dark .text-gray-700,
+body.dark .text-gray-600,
+body.dark .text-gray-500,
+body.dark .text-gray-400 {
+    color: #cbd5e1 !important;
+}
+
+body.dark .hover\:bg-gray-100:hover {
+    background-color: #1f2937 !important;
+}
+
+body.dark .hover\:bg-blue-100:hover {
+    background-color: #1e40af !important;
+}
+
+body.dark .shadow-sm {
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.5) !important;
+}
