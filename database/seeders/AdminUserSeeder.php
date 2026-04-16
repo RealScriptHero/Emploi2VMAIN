@@ -17,10 +17,10 @@ class AdminUserSeeder extends Seeder
         Utilisateur::updateOrCreate(
             ['email' => 'zharimaha@gmail.com'],  // Search condition
             [                                     // Data to create/update
-                'nom' => 'Zhari',
-                'prenom' => 'Maha',
+                'nom' => 'Admin',
+                'prenom' => 'User',
                 'email' => 'zharimaha@gmail.com',
-                'motDePasse' => 'password123',    // Will be auto-hashed by the model
+                'motDePasse' => 'ofppt1122',    // Will be auto-hashed by the model
                 'role' => 'admin',
                 'dateCreation' => now(),
             ]
