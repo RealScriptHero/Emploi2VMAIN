@@ -16,6 +16,9 @@ use Carbon\Carbon;
 use Illuminate\Validation\ValidationException;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 
 class EmploiDuTempsController extends Controller
 {
@@ -874,45 +877,43 @@ class EmploiDuTempsController extends Controller
 
         $date = $validated['date'];
         $type = $validated['type'];
-        $centreId = $validated['centre_id'] ?? null;
-        $groupeId = $validated['groupe_id'] ?? null;
-
-        $jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
-        $seances = [
-            'S1' => '08h30-11h',
-            'S2' => '11h-13h30',
-            'S3' => '13h30-16h',
-            'S4' => '16h-18h30',
-        ];
-
-        $query = EmploiDuTemps::with(['groupe.centre', 'formateur', 'module', 'salle'])
-            ->whereDate('date', $date)
-            ->orderBy('groupe_id')
-            ->orderBy('jour')
-            ->orderBy('creneau');
 
         if ($type === 'centre') {
+            // Keep the existing centre logic
+            $centreId = $validated['centre_id'] ?? null;
+            $groupeId = $validated['groupe_id'] ?? null;
+
+            $jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+            $seances = [
+                'S1' => '08h30-11h',
+                'S2' => '11h-13h30',
+                'S3' => '13h30-16h',
+                'S4' => '16h-18h30',
+            ];
+
+            $query = EmploiDuTemps::with(['groupe.centre', 'formateur', 'module', 'salle'])
+                ->whereDate('date', $date)
+                ->orderBy('groupe_id')
+                ->orderBy('jour')
+                ->orderBy('creneau');
+
             $query->whereHas('groupe', function ($q) use ($centreId) {
                 $q->where('centre_id', $centreId);
             });
-        } else {
-            $query->whereNotNull('formateur_id');
-        }
 
-        // Filter by specific group if groupe_id is provided
-        if ($groupeId) {
-            $query->where('groupe_id', $groupeId);
-        }
+            // Filter by specific group if groupe_id is provided
+            if ($groupeId) {
+                $query->where('groupe_id', $groupeId);
+            }
 
-        $emplois = $query->get();
-        $centre = $centreId ? Centre::find($centreId) : null;
-        $centreName = $centre?->nomCentre ?? 'Centre de Formation';
+            $emplois = $query->get();
+            $centre = $centreId ? Centre::find($centreId) : null;
+            $centreName = $centre?->nomCentre ?? 'Centre de Formation';
 
-        $year = Carbon::parse($date)->year;
-        $month = Carbon::parse($date)->month;
-        $academicYear = $month >= 9 ? "$year-" . ($year + 1) : ($year - 1) . "-$year";
+            $year = Carbon::parse($date)->year;
+            $month = Carbon::parse($date)->month;
+            $academicYear = $month >= 9 ? "$year-" . ($year + 1) : ($year - 1) . "-$year";
 
-        if ($type === 'centre') {
             // Get all groups for the centre, using the same logic as the groups API
             $query = Groupe::query()->where('centre_id', $centreId)->orderBy('id', 'desc');
             $groupes = $query->with(['centre','modules','emplois'])->get()->map(function (Groupe $groupe) {
@@ -925,13 +926,8 @@ class EmploiDuTempsController extends Controller
             if ($groupeId) {
                 $groupes = $groupes->where('id', $groupeId);
             }
-        } else {
-            // For formateur type, get unique groupes from emplois
-            $groupes = collect();
-        }
 
-        $rowsByParent = [];
-        if ($type === 'centre') {
+            $rowsByParent = [];
             foreach ($groupes as $groupe) {
                 $parentKey = $groupe->id;
                 $parentLabel = $groupe->centre ? strtoupper($groupe->centre->shortName) . ' - ' . $groupe->nomGroupe : $groupe->nomGroupe;
@@ -944,225 +940,436 @@ class EmploiDuTempsController extends Controller
                     ],
                 ];
             }
-        }
-        foreach ($emplois as $emploi) {
-            if ($type === 'centre') {
+            foreach ($emplois as $emploi) {
                 if (!$emploi->groupe) {
                     continue;
                 }
                 $parentKey = $emploi->groupe->id;
                 // $parentLabel already set above
-            } else {
-                if (!$emploi->formateur) {
-                    continue;
-                }
-                $parentKey = $emploi->formateur->id;
-                $parentLabel = trim($emploi->formateur->nom . ' ' . $emploi->formateur->prenom);
-                if (!isset($rowsByParent[$parentKey])) {
-                    $rowsByParent[$parentKey] = [
-                        'label' => $parentLabel,
-                        'cells' => [
-                            'formateur' => [],
-                            'module' => [],
-                            'salle' => [],
-                        ],
-                    ];
-                }
-            }
 
-            $key = $emploi->jour . '|' . $emploi->creneau;
+                $key = $emploi->jour . '|' . $emploi->creneau;
 
-            if ($type === 'centre') {
                 $rowsByParent[$parentKey]['cells']['formateur'][$key] = $emploi->formateur ? trim($emploi->formateur->nom . ' ' . $emploi->formateur->prenom) : '';
-            } else {
-                $rowsByParent[$parentKey]['cells']['group'][$key] = $emploi->groupe?->nomGroupe ?? '';
+                $rowsByParent[$parentKey]['cells']['module'][$key] = $emploi->module?->nomModule ?? '';
+                $rowsByParent[$parentKey]['cells']['salle'][$key] = $emploi->type_session === 'distance' || strtolower($emploi->salle?->nomSalle ?? '') === 'teams'
+                    ? 'TEAMS'
+                    : ($emploi->salle?->display_name ?? '');
             }
 
-            $rowsByParent[$parentKey]['cells']['module'][$key] = $emploi->module?->nomModule ?? '';
+            $spreadsheet = new Spreadsheet();
+            $sheet = $spreadsheet->getActiveSheet();
+            $sheet->setTitle('Emploi de Temps');
 
-            if ($type === 'formateur') {
-                $rowsByParent[$parentKey]['cells']['group'][$key] = $emploi->groupe
-                    ? ($emploi->groupe->nomGroupe ?? 'Groupe ' . $emploi->groupe->id)
-                    : '';
+            $totalCols = 2 + (count($jours) * count($seances));
+            $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($totalCols);
+
+            $titleStyle = [
+                'font' => ['bold' => true, 'size' => 16, 'color' => ['argb' => 'FF1E3A5F']],
+                'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
+            ];
+            $subtitleLeftStyle = [
+                'font' => ['bold' => true, 'size' => 11, 'color' => ['argb' => 'FF1E3A5F']],
+                'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
+            ];
+            $subtitleRightStyle = [
+                'font' => ['bold' => true, 'size' => 11, 'color' => ['argb' => 'FFCC0000']],
+                'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_RIGHT, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
+            ];
+            $dayHeaderStyle = [
+                'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF'], 'size' => 11],
+                'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1E3A5F']],
+                'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
+                'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
+            ];
+            $subHeaderStyle = [
+                'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF'], 'size' => 10],
+                'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E6DA4']],
+                'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
+                'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFFFFFFF']]],
+            ];
+            $groupStyle = [
+                'font' => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FF1E3A5F']],
+                'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE8F0FE']],
+                'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER, 'wrapText' => true],
+                'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
+            ];
+            $labelStyle = [
+                'font' => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FF1F2937']],
+                'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F5F9']],
+                'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER, 'wrapText' => true],
+                'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
+            ];
+            $cellStyle = [
+                'font' => ['size' => 9, 'color' => ['argb' => 'FF1F2937']],
+                'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER, 'wrapText' => true],
+                'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
+            ];
+            $teamsStyle = [
+                'font' => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FF2563EB']],
+                'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFDBEAFE']],
+                'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER, 'wrapText' => true],
+                'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
+            ];
+
+            $sheet->mergeCells("A1:{$lastCol}1");
+            $sheet->setCellValue('A1', "EMPLOI DE TEMPS {$academicYear}");
+            $sheet->getStyle('A1')->applyFromArray($titleStyle);
+            $sheet->getRowDimension(1)->setRowHeight(28);
+
+            $sheet->mergeCells('A2:M2');
+            $sheet->setCellValue('A2', strtoupper($centreName));
+            $sheet->getStyle('A2')->applyFromArray($subtitleLeftStyle);
+
+            $sheet->mergeCells("N2:{$lastCol}2");
+            $sheet->setCellValue("N2", 'A PARTIR DU ' . Carbon::parse($date)->format('d-m-Y'));
+            $sheet->getStyle("N2:{$lastCol}2")->applyFromArray($subtitleRightStyle);
+            $sheet->getRowDimension(2)->setRowHeight(24);
+            $sheet->getRowDimension(3)->setRowHeight(10);
+
+            $sheet->setCellValue('A4', '');
+            $sheet->setCellValue('B4', '');
+            $col = 3;
+            foreach ($jours as $jour) {
+                $start = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
+                $end = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 3);
+                $sheet->mergeCells("{$start}4:{$end}4");
+                $sheet->setCellValue("{$start}4", $jour);
+                $sheet->getStyle("{$start}4:{$end}4")->applyFromArray($dayHeaderStyle);
+                $col += 4;
             }
+            $sheet->getRowDimension(4)->setRowHeight(22);
 
-            $rowsByParent[$parentKey]['cells']['salle'][$key] = $emploi->type_session === 'distance' || strtolower($emploi->salle?->nomSalle ?? '') === 'teams'
-                ? 'TEAMS'
-                : ($emploi->salle?->display_name ?? '');
-        }
+            $sheet->setCellValue('A5', '');
+            $sheet->setCellValue('B5', '');
+            $col = 3;
+            foreach ($jours as $jour) {
+                $s1 = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
+                $s2 = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 1);
+                $sheet->mergeCells("{$s1}5:{$s2}5");
+                $sheet->setCellValue("{$s1}5", 'Matin');
+                $sheet->getStyle("{$s1}5:{$s2}5")->applyFromArray($subHeaderStyle);
 
-        $spreadsheet = new Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Emploi de Temps');
+                $s3 = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 2);
+                $s4 = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 3);
+                $sheet->mergeCells("{$s3}5:{$s4}5");
+                $sheet->setCellValue("{$s3}5", 'AM');
+                $sheet->getStyle("{$s3}5:{$s4}5")->applyFromArray($subHeaderStyle);
 
-        $totalCols = 2 + (count($jours) * count($seances));
-        $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($totalCols);
-
-        $titleStyle = [
-            'font' => ['bold' => true, 'size' => 16, 'color' => ['argb' => 'FF1E3A5F']],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
-        ];
-        $subtitleLeftStyle = [
-            'font' => ['bold' => true, 'size' => 11, 'color' => ['argb' => 'FF1E3A5F']],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
-        ];
-        $subtitleRightStyle = [
-            'font' => ['bold' => true, 'size' => 11, 'color' => ['argb' => 'FFCC0000']],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_RIGHT, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
-        ];
-        $dayHeaderStyle = [
-            'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF'], 'size' => 11],
-            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1E3A5F']],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
-            'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
-        ];
-        $subHeaderStyle = [
-            'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF'], 'size' => 10],
-            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E6DA4']],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER],
-            'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFFFFFFF']]],
-        ];
-        $groupStyle = [
-            'font' => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FF1E3A5F']],
-            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE8F0FE']],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER, 'wrapText' => true],
-            'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
-        ];
-        $labelStyle = [
-            'font' => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FF1F2937']],
-            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F5F9']],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER, 'wrapText' => true],
-            'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
-        ];
-        $cellStyle = [
-            'font' => ['size' => 9, 'color' => ['argb' => 'FF1F2937']],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER, 'wrapText' => true],
-            'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
-        ];
-        $teamsStyle = [
-            'font' => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FF2563EB']],
-            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFDBEAFE']],
-            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER, 'vertical' => \PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER, 'wrapText' => true],
-            'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN, 'color' => ['argb' => 'FFCCCCCC']]],
-        ];
-
-        $sheet->mergeCells("A1:{$lastCol}1");
-        $sheet->setCellValue('A1', "EMPLOI DE TEMPS {$academicYear}");
-        $sheet->getStyle('A1')->applyFromArray($titleStyle);
-        $sheet->getRowDimension(1)->setRowHeight(28);
-
-        $sheet->mergeCells('A2:M2');
-        $sheet->setCellValue('A2', strtoupper($centreName));
-        $sheet->getStyle('A2')->applyFromArray($subtitleLeftStyle);
-
-        $sheet->mergeCells("N2:{$lastCol}2");
-        $sheet->setCellValue("N2", 'A PARTIR DU ' . Carbon::parse($date)->format('d-m-Y'));
-        $sheet->getStyle("N2:{$lastCol}2")->applyFromArray($subtitleRightStyle);
-        $sheet->getRowDimension(2)->setRowHeight(24);
-        $sheet->getRowDimension(3)->setRowHeight(10);
-
-        $sheet->setCellValue('A4', '');
-        $sheet->setCellValue('B4', '');
-        $col = 3;
-        foreach ($jours as $jour) {
-            $start = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
-            $end = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 3);
-            $sheet->mergeCells("{$start}4:{$end}4");
-            $sheet->setCellValue("{$start}4", $jour);
-            $sheet->getStyle("{$start}4:{$end}4")->applyFromArray($dayHeaderStyle);
-            $col += 4;
-        }
-        $sheet->getRowDimension(4)->setRowHeight(22);
-
-        $sheet->setCellValue('A5', '');
-        $sheet->setCellValue('B5', '');
-        $col = 3;
-        foreach ($jours as $jour) {
-            $s1 = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
-            $s2 = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 1);
-            $sheet->mergeCells("{$s1}5:{$s2}5");
-            $sheet->setCellValue("{$s1}5", 'Matin');
-            $sheet->getStyle("{$s1}5:{$s2}5")->applyFromArray($subHeaderStyle);
-
-            $s3 = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 2);
-            $s4 = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 3);
-            $sheet->mergeCells("{$s3}5:{$s4}5");
-            $sheet->setCellValue("{$s3}5", 'AM');
-            $sheet->getStyle("{$s3}5:{$s4}5")->applyFromArray($subHeaderStyle);
-
-            $col += 4;
-        }
-        $sheet->getRowDimension(5)->setRowHeight(20);
-
-        $sheet->setCellValue('A6', '');
-        $sheet->setCellValue('B6', '');
-        $col = 3;
-        foreach ($jours as $jour) {
-            foreach ($seances as $time) {
-                $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
-                $sheet->setCellValue("{$letter}6", $time);
-                $sheet->getStyle("{$letter}6")->applyFromArray($subHeaderStyle);
-                $sheet->getColumnDimension($letter)->setWidth(15);
-                $col++;
+                $col += 4;
             }
-        }
-        $sheet->getRowDimension(6)->setRowHeight(20);
+            $sheet->getRowDimension(5)->setRowHeight(20);
 
-        $sheet->getColumnDimension('A')->setWidth(22);
-        $sheet->getColumnDimension('B')->setWidth(16);
+            $sheet->setCellValue('A6', '');
+            $sheet->setCellValue('B6', '');
+            $col = 3;
+            foreach ($jours as $jour) {
+                foreach ($seances as $time) {
+                    $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
+                    $sheet->setCellValue("{$letter}6", $time);
+                    $sheet->getStyle("{$letter}6")->applyFromArray($subHeaderStyle);
+                    $sheet->getColumnDimension($letter)->setWidth(15);
+                    $col++;
+                }
+            }
+            $sheet->getRowDimension(6)->setRowHeight(20);
 
-        $sheet->getStyle("A4:{$lastCol}6")->getAlignment()->setWrapText(true);
+            $sheet->getColumnDimension('A')->setWidth(22);
+            $sheet->getColumnDimension('B')->setWidth(16);
 
-        $currentRow = 7;
-        foreach ($rowsByParent as $parent) {
-            $sheet->mergeCells("A{$currentRow}:A" . ($currentRow + 2));
-            $sheet->setCellValue("A{$currentRow}", $parent['label']);
-            $sheet->getStyle("A{$currentRow}:A" . ($currentRow + 2))->applyFromArray($groupStyle);
+            $sheet->getStyle("A4:{$lastCol}6")->getAlignment()->setWrapText(true);
 
-            $sheet->setCellValue("B{$currentRow}", $type === 'centre' ? 'FORMATEUR' : 'GROUPE');
-            $sheet->setCellValue("B" . ($currentRow + 1), 'MODULE');
-            $sheet->setCellValue("B" . ($currentRow + 2), 'EFP / SALLE');
-            $sheet->getStyle("B{$currentRow}:B" . ($currentRow + 2))->applyFromArray($labelStyle);
+            $currentRow = 7;
+            foreach ($rowsByParent as $parent) {
+                $sheet->mergeCells("A{$currentRow}:A" . ($currentRow + 2));
+                $sheet->setCellValue("A{$currentRow}", $parent['label']);
+                $sheet->getStyle("A{$currentRow}:A" . ($currentRow + 2))->applyFromArray($groupStyle);
 
-            for ($dayIndex = 0; $dayIndex < count($jours); $dayIndex++) {
-                $jour = $jours[$dayIndex];
-                foreach (array_keys($seances) as $slotIndex => $slotKey) {
-                    $colIndex = 3 + ($dayIndex * 4) + $slotIndex;
-                    $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIndex);
-                    $cellKey = $jour . '|' . $slotKey;
+                $sheet->setCellValue("B{$currentRow}", 'FORMATEUR');
+                $sheet->setCellValue("B" . ($currentRow + 1), 'MODULE');
+                $sheet->setCellValue("B" . ($currentRow + 2), 'EFP / SALLE');
+                $sheet->getStyle("B{$currentRow}:B" . ($currentRow + 2))->applyFromArray($labelStyle);
 
-                    $firstRowKey = $type === 'centre' ? 'formateur' : 'group';
-                    $firstRowValue = $parent['cells'][$firstRowKey][$cellKey] ?? '';
-                    $moduleValue = $parent['cells']['module'][$cellKey] ?? '';
-                    $salleValue = $parent['cells']['salle'][$cellKey] ?? '';
+                for ($dayIndex = 0; $dayIndex < count($jours); $dayIndex++) {
+                    $jour = $jours[$dayIndex];
+                    foreach (array_keys($seances) as $slotIndex => $slotKey) {
+                        $colIndex = 3 + ($dayIndex * 4) + $slotIndex;
+                        $letter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIndex);
+                        $cellKey = $jour . '|' . $slotKey;
 
-                    $sheet->setCellValue("{$letter}{$currentRow}", $firstRowValue);
-                    $sheet->setCellValue("{$letter}" . ($currentRow + 1), $moduleValue);
-                    $sheet->setCellValue("{$letter}" . ($currentRow + 2), $salleValue);
+                        $firstRowValue = $parent['cells']['formateur'][$cellKey] ?? '';
+                        $moduleValue = $parent['cells']['module'][$cellKey] ?? '';
+                        $salleValue = $parent['cells']['salle'][$cellKey] ?? '';
 
-                    $sheet->getStyle("{$letter}{$currentRow}:{$letter}" . ($currentRow + 2))->applyFromArray($cellStyle);
+                        $sheet->setCellValue("{$letter}{$currentRow}", $firstRowValue);
+                        $sheet->setCellValue("{$letter}" . ($currentRow + 1), $moduleValue);
+                        $sheet->setCellValue("{$letter}" . ($currentRow + 2), $salleValue);
 
-                    if (strtoupper($salleValue) === 'TEAMS') {
-                        $sheet->getStyle("{$letter}" . ($currentRow + 2))->applyFromArray($teamsStyle);
+                        $sheet->getStyle("{$letter}{$currentRow}:{$letter}" . ($currentRow + 2))->applyFromArray($cellStyle);
+
+                        if (strtoupper($salleValue) === 'TEAMS') {
+                            $sheet->getStyle("{$letter}" . ($currentRow + 2))->applyFromArray($teamsStyle);
+                        }
                     }
                 }
+
+                $sheet->getRowDimension($currentRow)->setRowHeight(22);
+                $sheet->getRowDimension($currentRow + 1)->setRowHeight(22);
+                $sheet->getRowDimension($currentRow + 2)->setRowHeight(22);
+                $currentRow += 3;
             }
 
-            $sheet->getRowDimension($currentRow)->setRowHeight(22);
-            $sheet->getRowDimension($currentRow + 1)->setRowHeight(22);
-            $sheet->getRowDimension($currentRow + 2)->setRowHeight(22);
-            $currentRow += 3;
+            $sheet->freezePane('C7');
+
+            $fileName = sprintf('emploi-temps-%s-%s.xlsx', str_replace([' ', '/'], '_', strtolower($centreName)), $date);
+            $writer = new Xlsx($spreadsheet);
+
+            return response()->streamDownload(function () use ($writer) {
+                $writer->save('php://output');
+            }, $fileName, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ]);
+        } else {
+            // Formateur export - FIXED to include ALL formateurs
+            // ══════════════════════════════════════════════════════
+            // Get ALL formateurs in the same order as the page
+            // ══════════════════════════════════════════════════════
+            $formateurs = \App\Models\Formateur::all();
+            
+            // Then get emplois for this date
+            $emplois = \App\Models\EmploiDuTemps::with(['groupe', 'module', 'salle', 'formateur'])
+                ->whereDate('date', $date)
+                ->get();
+            
+            // Index emplois by formateur for fast lookup
+            $emploisByFormateur = $emplois->groupBy('formateur_id');
+            
+            // ══════════════════════════════════════════════════════
+            // Define time structure
+            // ══════════════════════════════════════════════════════
+            $jours = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+            $seances = [
+                'S1' => '08h30-11h',
+                'S2' => '11h-13h30',
+                'S3' => '13h30-16h',
+                'S4' => '16h-18h30'
+            ];
+            
+            // ══════════════════════════════════════════════════════
+            // Create spreadsheet
+            // ══════════════════════════════════════════════════════
+            $spreadsheet = new Spreadsheet();
+            $sheet = $spreadsheet->getActiveSheet();
+            $sheet->setTitle('Emploi Formateurs');
+            
+            // ══════════════════════════════════════════════════════
+            // Styles
+            // ══════════════════════════════════════════════════════
+            $headerStyle = [
+                'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF'], 'size' => 11],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1E3A5F']],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]]
+            ];
+            
+            $subHeaderStyle = [
+                'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF'], 'size' => 10],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E6DA4']],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]]
+            ];
+            
+            $formateurStyle = [
+                'font' => ['bold' => true, 'size' => 10],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE8F0FE']],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]]
+            ];
+            
+            $cellStyle = [
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                'font' => ['size' => 9]
+            ];
+            
+            $teamsStyle = [
+                'font' => ['bold' => true, 'color' => ['argb' => 'FF2563EB'], 'size' => 9],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFDBEAFE']],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]]
+            ];
+            
+            // ══════════════════════════════════════════════════════
+            // Header rows
+            // ══════════════════════════════════════════════════════
+            $totalCols = 2 + (count($jours) * count($seances));
+            $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($totalCols);
+            
+            // Row 1: Title
+            $sheet->mergeCells("A1:{$lastCol}1");
+            $sheet->setCellValue('A1', 'EMPLOI DES FORMATEURS - ' . \Carbon\Carbon::parse($date)->format('d/m/Y'));
+            $sheet->getStyle('A1')->applyFromArray([
+                'font' => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FF1E3A5F']],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER]
+            ]);
+            $sheet->getRowDimension(1)->setRowHeight(24);
+            
+            // Row 2: Empty
+            $sheet->getRowDimension(2)->setRowHeight(8);
+            
+            // Row 3: Day headers
+            $sheet->setCellValue('A3', '');
+            $sheet->setCellValue('B3', '');
+            $col = 3;
+            foreach ($jours as $jour) {
+                $startCol = $col;
+                $endCol = $col + count($seances) - 1;
+                $startLtr = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($startCol);
+                $endLtr = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($endCol);
+                $sheet->mergeCells("{$startLtr}3:{$endLtr}3");
+                $sheet->setCellValue("{$startLtr}3", $jour);
+                $sheet->getStyle("{$startLtr}3:{$endLtr}3")->applyFromArray($headerStyle);
+                $col += count($seances);
+            }
+            $sheet->getRowDimension(3)->setRowHeight(20);
+            
+            // Row 4: Matin/AM
+            $sheet->setCellValue('A4', 'Formateur');
+            $sheet->setCellValue('B4', 'Type');
+            $col = 3;
+            foreach ($jours as $jour) {
+                $s1Ltr = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
+                $s2Ltr = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 1);
+                $sheet->mergeCells("{$s1Ltr}4:{$s2Ltr}4");
+                $sheet->setCellValue("{$s1Ltr}4", 'Matin');
+                $sheet->getStyle("{$s1Ltr}4:{$s2Ltr}4")->applyFromArray($subHeaderStyle);
+                
+                $s3Ltr = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 2);
+                $s4Ltr = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 3);
+                $sheet->mergeCells("{$s3Ltr}4:{$s4Ltr}4");
+                $sheet->setCellValue("{$s3Ltr}4", 'AM');
+                $sheet->getStyle("{$s3Ltr}4:{$s4Ltr}4")->applyFromArray($subHeaderStyle);
+                
+                $col += count($seances);
+            }
+            $sheet->getRowDimension(4)->setRowHeight(18);
+            
+            // Row 5: Time slots
+            $sheet->setCellValue('A5', '');
+            $sheet->setCellValue('B5', '');
+            $col = 3;
+            foreach ($jours as $jour) {
+                foreach ($seances as $key => $time) {
+                    $ltr = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
+                    $sheet->setCellValue("{$ltr}5", $time);
+                    $sheet->getStyle("{$ltr}5")->applyFromArray($subHeaderStyle);
+                    $sheet->getColumnDimension($ltr)->setWidth(14);
+                    $col++;
+                }
+            }
+            $sheet->getRowDimension(5)->setRowHeight(18);
+            
+            $sheet->getStyle('A3:B5')->applyFromArray($headerStyle);
+            $sheet->getColumnDimension('A')->setWidth(22);
+            $sheet->getColumnDimension('B')->setWidth(14);
+            
+            // ══════════════════════════════════════════════════════
+            // Data rows - LOOP THROUGH ALL FORMATEURS
+            // ══════════════════════════════════════════════════════
+            $currentRow = 6;
+            
+            foreach ($formateurs as $formateur) {
+                $rowGroupe = $currentRow;
+                $rowModule = $currentRow + 1;
+                $rowSalle = $currentRow + 2;
+                
+                // Column A: Formateur name (merged 3 rows)
+                $formateurName = $formateur->nom . ' ' . $formateur->prenom;
+                $sheet->mergeCells("A{$rowGroupe}:A{$rowSalle}");
+                $sheet->setCellValue("A{$rowGroupe}", $formateurName);
+                $sheet->getStyle("A{$rowGroupe}:A{$rowSalle}")->applyFromArray($formateurStyle);
+                
+                // Column B: Labels
+                $sheet->setCellValue("B{$rowGroupe}", 'GROUPE');
+                $sheet->setCellValue("B{$rowModule}", 'MODULE');
+                $sheet->setCellValue("B{$rowSalle}", 'SALLE');
+                $sheet->getStyle("B{$rowGroupe}:B{$rowSalle}")->applyFromArray([
+                    'font' => ['bold' => true, 'size' => 9],
+                    'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F5F9']],
+                    'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+                    'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]]
+                ]);
+                
+                // Get emplois for this formateur (may be empty)
+                $formateurEmplois = $emploisByFormateur->get($formateur->id, collect());
+                
+                // Index emplois by jour|seance
+                $emploisIndex = [];
+                foreach ($formateurEmplois as $emp) {
+                    $key = $emp->jour . '|' . $emp->creneau;
+                    $emploisIndex[$key] = $emp;
+                }
+                
+                // Fill cells
+                $col = 3;
+                foreach ($jours as $jour) {
+                    foreach (array_keys($seances) as $seanceKey) {
+                        $ltr = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
+                        $key = $jour . '|' . $seanceKey;
+                        
+                        if (isset($emploisIndex[$key])) {
+                            $emp = $emploisIndex[$key];
+                            
+                            // GROUPE
+                            $groupeName = $emp->groupe->nomGroupe ?? '';
+                            $sheet->setCellValue("{$ltr}{$rowGroupe}", $groupeName);
+                            $sheet->getStyle("{$ltr}{$rowGroupe}")->applyFromArray($cellStyle);
+                            
+                            // MODULE
+                            $moduleName = $emp->module->nomModule ?? '';
+                            $sheet->setCellValue("{$ltr}{$rowModule}", $moduleName);
+                            $sheet->getStyle("{$ltr}{$rowModule}")->applyFromArray($cellStyle);
+                            
+                            // SALLE
+                            if ($emp->type_session === 'distance') {
+                                $sheet->setCellValue("{$ltr}{$rowSalle}", 'TEAMS');
+                                $sheet->getStyle("{$ltr}{$rowSalle}")->applyFromArray($teamsStyle);
+                            } else {
+                                $salleName = $emp->salle->display_name ?? '';
+                                $sheet->setCellValue("{$ltr}{$rowSalle}", $salleName);
+                                $sheet->getStyle("{$ltr}{$rowSalle}")->applyFromArray($cellStyle);
+                            }
+                        } else {
+                            // Empty cells for formateurs with no emploi at this slot
+                            $sheet->setCellValue("{$ltr}{$rowGroupe}", '');
+                            $sheet->setCellValue("{$ltr}{$rowModule}", '');
+                            $sheet->setCellValue("{$ltr}{$rowSalle}", '');
+                            $sheet->getStyle("{$ltr}{$rowGroupe}:{$ltr}{$rowSalle}")->applyFromArray($cellStyle);
+                        }
+                        
+                        $col++;
+                    }
+                }
+                
+                $sheet->getRowDimension($rowGroupe)->setRowHeight(22);
+                $sheet->getRowDimension($rowModule)->setRowHeight(22);
+                $sheet->getRowDimension($rowSalle)->setRowHeight(22);
+                
+                $currentRow += 3;
+            }
+            
+            // Freeze panes
+            $sheet->freezePane('C6');
+            
+            // Download
+            $fileName = 'emploi-formateurs-' . $date . '.xlsx';
+            $writer = new Xlsx($spreadsheet);
+            
+            return response()->streamDownload(function() use ($writer) {
+                $writer->save('php://output');
+            }, $fileName, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Content-Disposition' => 'attachment; filename="' . $fileName . '"'
+            ]);
         }
-
-        $sheet->freezePane('C7');
-
-        $fileName = sprintf('emploi-temps-%s-%s.xlsx', str_replace([' ', '/'], '_', strtolower($centreName)), $date);
-        $writer = new Xlsx($spreadsheet);
-
-        return response()->streamDownload(function () use ($writer) {
-            $writer->save('php://output');
-        }, $fileName, [
-            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        ]);
     }
 }
