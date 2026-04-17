@@ -7,11 +7,15 @@ nixPkgs = [
   "php83Extensions.pdo",
   "php83Extensions.pdo_mysql",
   "php83Extensions.xml",
-  "php83Extensions.zip"
+  "php83Extensions.zip",
+  "php83Extensions.curl",
+  "php83Extensions.openssl"
 ]
 
 [phases.install]
-cmds = ["composer install --no-dev --optimize-autoloader"]
+cmds = [
+  "composer install --no-dev --optimize-autoloader --prefer-dist --no-interaction"
+]
 
 [phases.build]
 cmds = [
