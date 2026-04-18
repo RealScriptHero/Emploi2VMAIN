@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\FormateurController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\SettingsController;
@@ -12,6 +13,10 @@ use App\Models\Group;
 | Web Routes
 |--------------------------------------------------------------------------
 */
+
+Route::get('/test-db', function () {
+    return DB::select('SELECT 1');
+});
 
 Route::middleware('auth')->group(function () {
     Route::get('/', [HomeController::class, 'index'])->name('home');
